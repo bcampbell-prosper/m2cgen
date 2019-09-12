@@ -101,28 +101,37 @@ class XGBoostModelAssembler(BaseBoostingAssembler):
     def _assemble_tree(self, tree):
         if "leaf" in tree:
             return ast.NumVal(tree["leaf"])
-
-        threshold = ast.NumVal(tree["split_condition"])
+        
         split = tree["split"]
         feature_idx = self._feature_name_to_idx.get(split, split)
         feature_ref = ast.FeatureRef(feature_idx)
 
-        # Since comparison with NaN (missing) value always returns false we
-        # should make sure that the node ID specified in the "missing" field
-        # always ends up in the "else" branch of the ast.IfExpr.
-        use_lt_comp = tree["missing"] == tree["no"]
-        if use_lt_comp:
-            comp_op = ast.CompOpType.LT
+        if "split_condition" in tree:
+            threshold = ast.NumVal(tree["split_condition"])
+            
+            # Since comparison with NaN (missing) value always returns false we
+            # should make sure that the node ID specified in the "missing" field
+            # always ends up in the "else" branch of the ast.IfExpr.
+            use_lt_comp = tree["missing"] == tree["no"]
+            if use_lt_comp:
+                comp_op = ast.CompOpType.LT
+                true_child_id = tree["yes"]
+                false_child_id = tree["no"]
+            else:
+                comp_op = ast.CompOpType.GTE
+                true_child_id = tree["no"]
+                false_child_id = tree["yes"]
+            comp_exp = ast.CompExpr(feature_ref, threshold, comp_op)            
+        else:         
+            #raise TypeError('Boolean features are unsupported at this time')
             true_child_id = tree["yes"]
             false_child_id = tree["no"]
-        else:
-            comp_op = ast.CompOpType.GTE
-            true_child_id = tree["no"]
-            false_child_id = tree["yes"]
+            comp_exp = feature_ref
 
-        return ast.IfExpr(ast.CompExpr(feature_ref, threshold, comp_op),
-                          self._assemble_child_tree(tree, true_child_id),
-                          self._assemble_child_tree(tree, false_child_id))
+        return ast.IfExpr(comp_exp,
+                        self._assemble_child_tree(tree, true_child_id),
+                        self._assemble_child_tree(tree, false_child_id))
+        
 
     def _assemble_child_tree(self, tree, child_id):
         for child in tree["children"]:
